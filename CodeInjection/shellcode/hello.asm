@@ -13,9 +13,7 @@ MAIN:
     mov rdx, 0xe
     syscall
 
-    mov rax, 0x3c
-    mov rdi, 0x0
-    syscall
+    int 0x3                     ; Fire a software interrupt
 
 MESSAGE:
     call MAIN                   ; we jump back to MAIN, but since we use "call",

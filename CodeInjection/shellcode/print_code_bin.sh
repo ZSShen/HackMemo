@@ -1,0 +1,1 @@
+`objcopy -O binary --only-section=.text $1 $1.bin`
