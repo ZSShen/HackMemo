@@ -11,14 +11,10 @@ MAIN:
     push rbp
     mov rbp, rsp
 
-    push 0x2
-    mov rbx, rax
-    add rbx, 0x8
-    push rbx
+    mov rsi, 0x2
+    mov rdi, rax
+    add rdi, 0x8
     call [rax]
-
-    add rsp, 0x10
-    pop rbp
 
     int 0x3                     ; Fire a software interrupt
 
