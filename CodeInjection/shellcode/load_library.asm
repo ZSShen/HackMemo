@@ -6,15 +6,27 @@ _start:
     jmp DLOPEN_ADDR             ; Jump to DLOPEN_ADDR
 
 MAIN:
-    pop rax                     ; Pop the return address which is actually the
+    pop r9                      ; Pop the return address which is actually the
                                 ; address of "the address of dlopen()"
-    push rbp
-    mov rbp, rsp
 
-    mov rsi, 0x2
-    mov rdi, rax
+    xor rsi, rsi
+    xor rdi, rdi
+    mov rsi, 0x1
+    mov rdi, r9
     add rdi, 0x8
-    call [rax]
+
+    mov r9, qword[r9]
+    push r9
+    call r9
+
+    ;mov rsi, r9
+    ;add rsi, 0x8
+    ;mov rax, 0x1
+    ;mov rdi, 0x1
+    ;mov rdx, 0x10
+    ;syscall
+
+    pop r9
 
     int 0x3                     ; Fire a software interrupt
 

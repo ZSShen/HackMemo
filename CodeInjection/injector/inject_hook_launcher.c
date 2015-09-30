@@ -38,7 +38,7 @@ int read_victim_code(pid_t pid, void *addr_rip, char *code, int len_code)
     for (iter = 0 ; iter < count_word ; ++iter) {
         int ofst = iter * SIZE_PTRACE_WORD;
         long rc = ptrace(PTRACE_PEEKDATA, pid, addr_rip + ofst, NULL);
-        if (rc < 0)
+        if (rc == -1)
             ERROR_RETURN(ptrace(PTRACE_DETACH, pid, NULL, NULL));
         word.m_word_full = rc;
         memcpy(code + ofst, word.m_word_part, SIZE_PTRACE_WORD);
@@ -55,7 +55,7 @@ int write_victim_code(pid_t pid, void *addr_rip, char *code, int len_code)
     for (iter = 0 ; iter < count_word ; ++iter) {
         int ofst = iter * SIZE_PTRACE_WORD;
         memcpy(word.m_word_part, code + ofst, SIZE_PTRACE_WORD);
-        if (ptrace(PTRACE_POKEDATA, pid, addr_rip + ofst, word.m_word_full) < 0)
+        if (ptrace(PTRACE_POKEDATA, pid, addr_rip + ofst, word.m_word_full) == -1)
             ERROR_RETURN(ptrace(PTRACE_DETACH, pid, NULL, NULL));
     }
 
@@ -82,7 +82,7 @@ int load_shell_code(char *path_code_file, char *shell_code, int *p_len_code)
 void patch_shell_code(char *shell_code, int *p_len_code, ulong addr_dlopen,
                       char *path_lib)
 {
-    printf("0x%08lx\n", addr_dlopen);
+    printf("dlopen(): 0x%08lx\n", addr_dlopen);
     /* Append the address of dlopen(). */
     int len_code = *p_len_code;
     shell_code[len_code] = (char)addr_dlopen & 0xff;
@@ -209,6 +209,7 @@ int main(int argc, char **argv)
 
     /* Backup the victim code. */
     char victim_code[SIZE_BLAH_BUF];
+    printf("%d\n", len_code);
     if (read_victim_code(victim_pid, (void*)regs.rip, victim_code, len_code) != SUCC)
         return FAIL;
 
@@ -226,6 +227,12 @@ int main(int argc, char **argv)
 
     /* Wait for the software interrupt fired by the shell code. */
     wait(NULL);
+
+    char dlopen_code[SIZE_BLAH_BUF];
+    if (read_victim_code(victim_pid, (void*)addr_dlopen_victim, dlopen_code, 0x20) != SUCC)
+        return FAIL;
+    for (i = 0 ; i < 0x20 ; ++i)
+        printf("0x%02x\n", dlopen_code[i] & 0xff);
 
     /* Restore the victim status. */
     printf("Mission Complete! Restore the status of the victim.\n");
