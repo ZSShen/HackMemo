@@ -11,17 +11,25 @@
 #include <sys/types.h>
 #include <sys/stat.h>
 #include <sys/user.h>
+#include <sys/mman.h>
 
 
 #define SUCC                    (0)
 #define FAIL                    (1)
 #define SIZE_BLAH_BUF           (1024)
-#define SIZE_SHELLCODE          (256)
 #define SIZE_PATHNAME           (512)
+#define SIZE_SEGMENT            (4096)
+#define COUNT_PARAM             (16)
 
 #define INTEL_RET_X86           (0xc3)
 #define INTEL_INT3              (0xcc)
 #define INTEL_NOOP              (0x90)
+
+#define PATH_LINKER             "/system/bin/linker"
+#define PATH_LIBC               "/system/lib/libc.so"
+#define NAME_LINKER             "libdl.so"
+#define FUNC_MMAP               "mmap"
+#define FUNC_DLOPEN             "dlopen"
 
 
 #define ERROR_MSG(msg)              do {                                        \
@@ -97,14 +105,6 @@ CLOSE:
     dlclose(hdLib);
 RETURN:
     return rc;
-}
-
-void getEpilogueRetAddr(ulong addrEpi, ulong *pAddrRet)
-{
-    uchar *pSlide = (uchar*)addrEpi;
-    while (*pSlide != INTEL_RET_X86)
-        --pSlide;
-    *pAddrRet = (ulong)pSlide;
 }
 
 
@@ -206,13 +206,20 @@ RETURN:
     return rc;
 }
 
+int ptraceWait(pid_t pid)
+{
+    int rc = SUCC, status;
+
+    if (waitpid(pid, &status, WUNTRACED) != pid)
+        ERROR_MSG_BREAK(RETURN);
+
+RETURN:
+    return rc;
+}
+
 int ptraceGetSignInfo(pid_t pid, siginfo_t *pSignInfo)
 {
     int rc = SUCC;
-
-    int status;
-    if(waitpid(pid, &status, WUNTRACED) != pid)
-        ERROR_MSG_BREAK(RETURN);
 
     if (ptrace(PTRACE_GETSIGINFO, pid, NULL, pSignInfo) == -1)
         ERROR_MSG_BREAK(RETURN);
@@ -221,42 +228,20 @@ RETURN:
     return rc;
 }
 
-
-/*----------------------------------------------------------------------------*
- *  The shellcode to load hooking library in the target process memory space. *
- *----------------------------------------------------------------------------*/
-void shellcodeBgn()
+int ptraceWaitSysCall(pid_t pid)
 {
-    asm (
-        /* ecx stores the to be allocated space size. */
-        "push %ecx \n"
-        /* eax stores the address of malloc(). */
-        "call *%eax \n"
-        /* The starting address of the allocated space is stored in eax. */
-        "int $3"
-    );
+    int rc = SUCC;
 
-    asm (
-        /* The second argument is set for RTLD_LAZY. */
-        "push $1 \n"
-        /* The first argument is set to the starting address of library pathname. */
-        "push %esi \n"
-        /* eax stores the address of dlopen(). */
-        "call *%eax \n"
-        "int $3"
-    );
+    if (ptrace(PTRACE_SYSCALL, pid, NULL, NULL) == -1)
+        ERROR_MSG_BREAK(RETURN);
 
-    asm (
-        /* esi stores the starting address of the allocated space.*/
-        "push %esi \n"
-        /* eax stores the address of free(). */
-        "call *%eax\n"
-        "int $3"
-    );
+    int status;
+    if (waitpid(pid, &status, WUNTRACED) != pid)
+        ERROR_MSG_BREAK(RETURN);
+
+RETURN:
+    return rc;
 }
-
-void shellcodeEnd()
-{ /* Just a pivot to help us calculate the length of the compiled shellcode. */ }
 
 
 int main(int argc, char **argv)
@@ -275,138 +260,108 @@ int main(int argc, char **argv)
     pid_t pidHim = atoi(argv[1]);
 
     ulong addrLinkerBgnMe;
-    if (getLibraryBgnAddr(pidMe, "/system/bin/linker", &addrLinkerBgnMe) != SUCC)
+    if (getLibraryBgnAddr(pidMe, PATH_LINKER, &addrLinkerBgnMe) != SUCC)
         ERROR_RETURN(RETURN);
     ulong addrLinkderBgnHim;
-    if (getLibraryBgnAddr(pidHim, "/system/bin/linker", &addrLinkderBgnHim) != SUCC)
+    if (getLibraryBgnAddr(pidHim, PATH_LINKER, &addrLinkderBgnHim) != SUCC)
+        ERROR_RETURN(RETURN);
+
+    ulong addrLibcBgnMe;
+    if (getLibraryBgnAddr(pidMe, PATH_LIBC, &addrLibcBgnMe) != SUCC)
+        ERROR_RETURN(RETURN);
+    ulong addrLibcBgnHim;
+    if (getLibraryBgnAddr(pidHim, PATH_LIBC, &addrLibcBgnHim) != SUCC)
         ERROR_RETURN(RETURN);
 
     ulong addrDlopenMe;
-    if (getFunctionBgnAddr("libdl.so", "dlopen", &addrDlopenMe) != SUCC)
+    if (getFunctionBgnAddr(NAME_LINKER, FUNC_DLOPEN, &addrDlopenMe) != SUCC)
         ERROR_RETURN(RETURN);
     ulong addrDlopenHim = addrLinkderBgnHim + (addrDlopenMe - addrLinkerBgnMe);
 
-    //printf("dlopen() Me : 0x%08x 0x%08x\n", addrLinkerBgnMe, addrDlopenMe);
-    //printf("dlopen() Him: 0x%08x 0x%08x\n", addrLinkderBgnHim, addrDlopenHim);
-
-    /* To resolve malloc(). */
-    ulong addrLibcBgnMe;
-    if (getLibraryBgnAddr(pidMe, "libc", &addrLibcBgnMe) != SUCC)
+    ulong addrMmapMe;
+    if (getFunctionBgnAddr(PATH_LIBC, FUNC_MMAP, &addrMmapMe) != SUCC)
         ERROR_RETURN(RETURN);
-    ulong addrLibcBgnHim;
-    if (getLibraryBgnAddr(pidHim, "libc", &addrLibcBgnHim) != SUCC)
-        ERROR_RETURN(RETURN);
-
-    ulong addrMallocMe;
-    if (getFunctionBgnAddr("libc.so", "malloc", &addrMallocMe) != SUCC)
-        ERROR_RETURN(RETURN);
-    ulong addrMallocHim = addrLibcBgnHim + (addrMallocMe - addrLibcBgnMe);
-    //printf("malloc() Me : 0x%08lx 0x%08lx\n", addrLibcBgnMe, addrMallocMe);
-    //printf("malloc() Him: 0x%08lx 0x%08lx\n", addrLibcBgnHim, addrMallocHim);
-
-    /* To resolve free(). */
-    ulong addrFreeMe;
-    if (getFunctionBgnAddr("libc.so", "free", &addrFreeMe) != SUCC)
-        ERROR_RETURN(RETURN);
-    ulong addrFreeHim = addrLibcBgnHim + (addrFreeMe - addrLibcBgnMe);
-    //printf("free() Me : 0x%08x 0x%08x\n", addrLibcBgnMe, addrFreeMe);
-    //printf("free() Him: 0x%08x 0x%08x\n", addrLibcBgnHim, addrFreeHim);
+    ulong addrMmapHim = addrLibcBgnHim + ((ulong)mmap - addrLibcBgnMe);
+    //printf("mmap() Me : 0x%08lx 0x%08lx\n", addrLibcBgnMe, addrMmapMe);
+    //printf("mmap() Him: 0x%08lx 0x%08lx\n", addrLibcBgnHim, addrMmapHim);
 
     /*----------------------------------------------------------------*
-     *             Prepare the to be injected objects.                *
+     *             Start to manipulate the target process.            *
      *----------------------------------------------------------------*/
-    /* Prepare the shell code. */
-    uchar codeShell[SIZE_SHELLCODE];
-    int lenCode = (ulong)shellcodeEnd - (ulong)shellcodeBgn + 1;
-    memcpy(codeShell, shellcodeBgn, lenCode);
-    codeShell[lenCode - 1] = INTEL_INT3;
-
-    div_t countWord = div(lenCode, sizeof(ulong));
-    int iter, patch = (countWord.rem > 0)? (sizeof(ulong) - countWord.rem) : 0;
-    for (iter = 0 ; iter < patch ; ++iter)
-        codeShell[lenCode++] = INTEL_NOOP;
-
     /* Prepare the library pathname. */
     char szPath[SIZE_PATHNAME];
     int lenPath = strlen(argv[2]);
     strncpy(szPath, argv[2], lenPath);
     szPath[lenPath++] = 0;
 
-    countWord = div(lenPath, sizeof(ulong));
-    patch = (countWord.rem > 0)? (sizeof(ulong) - countWord.rem) : 0;
+    div_t countWord = div(lenPath, sizeof(ulong));
+    int iter, patch = (countWord.rem > 0)? (sizeof(ulong) - countWord.rem) : 0;
     for (iter = 0 ; iter < patch ; ++iter)
         szPath[lenPath++] = 0;
 
-    /*----------------------------------------------------------------*
-     *             Start to manipulate the target process.            *
-     *----------------------------------------------------------------*/
+    printf("[+] Start to injector the target %d.\n", pidHim);
     if (ptraceAttach(pidHim) != SUCC)
         ERROR_RETURN(RETURN);
 
-    /* Backup the context  */
+    /* Backup the context. */
     struct user_regs_struct regOrig;
     if (ptraceGetRegs(pidHim, &regOrig) != SUCC)
         ERROR_RETURN(RETURN, ptraceDetach(pidHim));
 
-    uchar codeOrig[SIZE_SHELLCODE];
-    if (ptracePeekText(pidHim, regOrig.eip, codeOrig, lenCode) != SUCC)
-        ERROR_RETURN(RETURN, ptraceDetach(pidHim));
-    ulong addrInjectEntry = regOrig.eip;
+    /* Force the target process to execute mmap().
+       To fit the calling convention,
+       arrParam[0] stores the return address, and
+       arrParam[6] to arrParam[1] is the actual parameters of mmap(). */
+    ulong arrParam[COUNT_PARAM];
+    arrParam[0] = 0;
+    arrParam[1] = 0;
+    arrParam[2] = SIZE_SEGMENT;
+    arrParam[3] = PROT_READ | PROT_WRITE | PROT_EXEC;
+    arrParam[4] = MAP_ANONYMOUS | MAP_PRIVATE;
+    arrParam[5] = 0;
+    arrParam[6] = 0;
+    int byteRepl = sizeof(ulong) * 7;
 
-    /* Force the target process to execute malloc() function. */
     struct user_regs_struct regModi;
     memcpy(&regModi, &regOrig, sizeof(struct user_regs_struct));
-    regModi.eax = addrMallocHim;
-    regModi.ecx = lenPath;
+    regModi.eip = addrMmapHim;
+    regModi.esp -= byteRepl;
 
-    if (ptraceSetRegs(pidHim, &regModi) != SUCC)
+    if (ptracePokeText(pidHim, regModi.esp, arrParam, byteRepl) != SUCC)
         ERROR_RETURN(RETURN, ptraceDetach(pidHim));
 
-    if (ptracePokeText(pidHim, addrInjectEntry, codeShell, lenCode) != SUCC)
+    if (ptraceSetRegs(pidHim, &regModi) != SUCC)
         ERROR_RETURN(RETURN, ptraceDetach(pidHim));
 
     if (ptraceContinue(pidHim) != SUCC)
         ERROR_RETURN(RETURN, ptraceDetach(pidHim));
 
-    siginfo_t signInfo;
-    if (ptraceGetSignInfo(pidHim, &signInfo) != SUCC)
+    /* The injector will receive a SIGSEGV triggered by invalid return address. */
+    if (ptraceWait(pidHim) != SUCC)
         ERROR_RETURN(RETURN, ptraceDetach(pidHim));
-    if (signInfo.si_signo != SIGTRAP) {
-        printf("Signal Number: %d\n", signInfo.si_signo);
-        ERROR_MSG("The target process does not fire SIGTRAP but crash!");
-        ERROR_RETURN(RETURN, ptraceDetach(pidHim));
-    }
 
-    /* Force the target process to call dlopen(). */
+    /* Retrieve the address of the newly mapped memory segment. */
     if (ptraceGetRegs(pidHim, &regModi) != SUCC)
         ERROR_RETURN(RETURN, ptraceDetach(pidHim));
-    ulong addrLibPath = regModi.eax;
+    ulong addrMap = regModi.eax;
+    printf("[+] mmap() successes!\n");
 
-    if (ptracePokeText(pidHim, addrLibPath, szPath, lenPath) != SUCC)
-        ERROR_RETURN(RETURN, ptraceDetach(pidHim));
-    printf("PathName:%lx, %d\n", addrLibPath, lenPath);
-
-    regModi.eax = addrDlopenHim;
-    regModi.esi = addrLibPath;
-    if (ptraceSetRegs(pidHim, &regModi) != SUCC)
+    if (ptracePokeText(pidHim, addrMap, szPath, lenPath) != SUCC)
         ERROR_RETURN(RETURN, ptraceDetach(pidHim));
 
-    if (ptraceContinue(pidHim) != SUCC)
-        ERROR_RETURN(RETURN, ptraceDetach(pidHim));
+    /* Force the target process to call dlopen().
+       To fit the calling convention,
+       arrParam[0] stores the return address, and
+       arrParam[2] to arrParam[1] is the actual parameters of dlopen(). */
+    arrParam[0] = 0;
+    arrParam[1] = addrMap;
+    arrParam[2] = RTLD_LAZY;
+    byteRepl = sizeof(long) * 3;
+    regModi.eip = addrDlopenHim;
+    regModi.esp -= byteRepl;
 
-    if (ptraceGetSignInfo(pidHim, &signInfo) != SUCC)
+    if (ptracePokeText(pidHim, regModi.esp, arrParam, byteRepl) != SUCC)
         ERROR_RETURN(RETURN, ptraceDetach(pidHim));
-    if (signInfo.si_signo != SIGTRAP) {
-        ERROR_MSG("The target process does not fire SIGTRAP but crash!");
-        ERROR_RETURN(RETURN, ptraceDetach(pidHim));
-    }
-
-    /* Force the target process to execute free() function. */
-    if (ptraceGetRegs(pidHim, &regModi) != SUCC)
-        ERROR_RETURN(RETURN, ptraceDetach(pidHim));
-
-    regModi.eax = addrFreeHim;
-    regModi.esi = addrLibPath;
 
     if (ptraceSetRegs(pidHim, &regModi) != SUCC)
         ERROR_RETURN(RETURN, ptraceDetach(pidHim));
@@ -414,18 +369,13 @@ int main(int argc, char **argv)
     if (ptraceContinue(pidHim) != SUCC)
         ERROR_RETURN(RETURN, ptraceDetach(pidHim));
 
-    if (ptraceGetSignInfo(pidHim, &signInfo) != SUCC)
+    /* The injector will receive a SIGSEGV triggered by invalid return address. */
+    if (ptraceWait(pidHim) != SUCC)
         ERROR_RETURN(RETURN, ptraceDetach(pidHim));
-    if (signInfo.si_signo != SIGTRAP) {
-        printf("Signal Number: %d\n", signInfo.si_signo);
-        ERROR_MSG("The target process does not fire SIGTRAP but crash!");
-        ERROR_RETURN(RETURN, ptraceDetach(pidHim));
-    }
+    printf("[+] dlopen() successes!\n");
 
     /* At this stage, we finish the task and should restore the context of the
        target process. */
-    if (ptracePokeText(pidHim, addrInjectEntry, codeOrig, lenCode) != SUCC)
-        ERROR_RETURN(RETURN, ptraceDetach(pidHim));
     if (ptraceSetRegs(pidHim, &regOrig) != SUCC)
         ERROR_RETURN(RETURN, ptraceDetach(pidHim));
 
