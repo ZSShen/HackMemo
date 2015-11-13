@@ -4,8 +4,11 @@
 
 int main()
 {
-    int var = 0;
-    AsmFunction(&var);
-    std::cout << var << std::endl;
+    Table tbl;
+    AsmFunction(&tbl);
+    std::cout << tbl.m_First << std::endl;
+    std::cout << tbl.m_Second << std::endl;
+    std::cout << tbl.m_Third << std::endl;
+
     return 0;
 }
