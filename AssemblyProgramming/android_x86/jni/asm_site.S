@@ -1,8 +1,13 @@
 
-# Constant Definition
+# Constant definition
 .equ OFST_FIRST, 0
 .equ OFST_SECOND, 4
 .equ OFST_THIRD, 8
+.equ OFST_FORTH, 12
+
+
+# Link with C site
+.global CFunction
 
 
 .section .text
@@ -27,6 +32,16 @@ AsmFunction:
     #movl %eax, OFST_SECOND(%esi)
     #movl %fs:OFST_THIRD, %eax
     #movl %eax, OFST_THIRD(%esi)
+
+    push %esi
+    subl $12, %esp
+    movl $OFST_THIRD, OFST_FIRST(%esp)
+    movl $OFST_SECOND, OFST_SECOND(%esp)
+    movl $OFST_FIRST, OFST_THIRD(%esp)
+    call CFunction
+    addl $12, %esp
+    pop %esi
+    movl %eax, OFST_FORTH(%esi)
 
     popf
     popa
