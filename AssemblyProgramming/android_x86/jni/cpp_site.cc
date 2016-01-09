@@ -1,5 +1,12 @@
 #include <iostream>
-#include <bridge.h>
+#include <stdint.h>
+#include "bridge.h"
+#include "inline.h"
+
+
+thread_local uint32_t backup_eax;
+thread_local uint32_t backup_esi;
+void CallBack();
 
 
 int main()
@@ -21,4 +28,20 @@ int CFunction(int op1, int op2, int op3)
     std::cout << "[+] In C site " << op2 << std::endl;
     std::cout << "[+] In C site " << op3 << std::endl;
     return res;
+}
+
+
+uintptr_t TLSIntervention(uint32_t eax, uint32_t esi)
+{
+    backup_eax = eax;
+    backup_esi = esi;
+    std::cout << "[+] eax=" << backup_eax << std::endl;
+    std::cout << "[+] esi=" << backup_esi << std::endl;
+    return reinterpret_cast<uintptr_t>(CallBack);
+}
+
+
+void CallBack()
+{
+    std::cout << "Call back by assembly side." << std::endl;
 }

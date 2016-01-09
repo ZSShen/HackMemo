@@ -12,6 +12,7 @@ struct Table
 
 extern void AsmFunction(Table*) __asm__("AsmFunction");
 extern "C" int CFunction(int, int, int);
+extern "C" uintptr_t TLSIntervention(uint32_t, uint32_t);
 
 
 #endif

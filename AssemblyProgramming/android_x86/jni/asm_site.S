@@ -8,6 +8,7 @@
 
 # Link with C site
 .global CFunction
+.global TLSIntervention
 
 
 .section .text
@@ -42,6 +43,17 @@ AsmFunction:
     addl $12, %esp
     pop %esi
     movl %eax, OFST_FORTH(%esi)
+
+    # Call to TLS testing.
+    movl $12345, %eax
+    movl $67890, %esi
+    push %esi
+    push %eax
+    call TLSIntervention
+    add $8, %esp
+
+    # Invoke Cpp site callback.
+    call *%eax
 
     popf
     popa
