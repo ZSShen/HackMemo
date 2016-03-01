@@ -7,4 +7,9 @@
         <mkdir dir="bin"/>
         <javac srcdir="src" destdir="bin"/>
     </target>
+
+    <target name="jni-header">
+        <javah destdir="src/util/jni" force="yes" classpath="bin"
+            class="util.JNIWrapper"/>
+    </target>
 </project>
