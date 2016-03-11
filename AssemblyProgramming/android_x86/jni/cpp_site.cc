@@ -9,8 +9,25 @@ thread_local uint32_t backup_esi;
 void CallBack();
 
 
+class Class
+{
+  public:
+    uintptr_t Function(uint32_t, void*);
+};
+
+uintptr_t Class::Function(uint32_t integer, void* object)
+{
+    std::cout << integer << ' ' << object << std::endl;
+    uintptr_t res = 1234;
+    return res;
+}
+
+
 int main()
 {
+    Class clazz;
+    uintptr_t res = clazz.Function(21, nullptr);
+
     Table tbl;
     AsmFunction(&tbl);
     std::cout << "[+] In main " << tbl.m_First << std::endl;
